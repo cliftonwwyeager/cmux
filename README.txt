@@ -7,4 +7,4 @@
 ╚██████╗██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗    
  ╚═════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝    
                                         
-Clipboard multiplexor written in Python - v1.0
+Clipboard multiplexor written in Python - v1.0.1
