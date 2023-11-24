@@ -3,6 +3,8 @@ from tkinter import ttk
 from tkinter import messagebox
 import socket
 import threading
+import subprocess
+import os
 
 def add_remote_system():
     system_address = remote_system_entry.get().strip()
@@ -20,16 +22,30 @@ def send_clipboard_contents():
 
 def send_to_remote_system(system_address, contents):
     try:
-        # Simplified example of sending data - in real-world use secure connection
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((system_address, PORT))  # PORT should be defined
             s.sendall(contents.encode())
     except Exception as e:
         messagebox.showerror("Error", f"Could not send data to {system_address}: {e}")
+        
+def connect_to_remote_desktop(system_address):
+    try:
+        # Ensure the rdesktop is installed
+        if not is_tool("rdesktop"):
+            raise EnvironmentError("rdesktop is not installed")
 
-def connect_to_remote_desktop():
-    # This function would need to handle the actual connection to a remote desktop
-    pass
+        # Command to start an rdesktop session
+        command = ["rdesktop", system_address]
+        
+        # Launch the rdesktop in a subprocess
+        subprocess.Popen(command)
+    except Exception as e:
+        print(f"Error connecting to remote desktop: {e}")
+
+def is_tool(name):
+    """Check whether `name` is on PATH and marked as executable."""
+    from shutil import which
+    return which(name) is not None
 
 # Setting up the GUI
 root = tk.Tk()
