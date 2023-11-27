@@ -58,7 +58,7 @@ def on_connect_remote_desktop():
 
 # Setting up the GUI
 root = tk.Tk()
-root.title("Clipboard Multiplexer and Remote Control")
+root.title("cMuX v1.0.1")
 
 # Add remote system section
 add_remote_frame = ttk.Frame(root)
