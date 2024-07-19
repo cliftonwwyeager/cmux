@@ -16,6 +16,7 @@ class ClipboardMultiplexer(tk.Tk):
         super().__init__()
         self.title("cMuX V1.1.2")
         self.create_widgets()
+        self.remote_systems = []
 
     def create_widgets(self):
         self.create_add_remote_frame()
@@ -34,8 +35,8 @@ class ClipboardMultiplexer(tk.Tk):
         ttk.Button(add_remote_frame, text="Remove", command=self.remove_selected_system).pack(side=tk.LEFT)
 
     def create_remote_systems_list(self):
-        self.remote_systems_list = tk.Listbox(self)
-        self.remote_systems_list.pack(padx=10, pady=10)
+        self.remote_systems_list = tk.Listbox(self, selectmode=tk.SINGLE)
+        self.remote_systems_list.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
     def create_transfer_frame(self):
         transfer_frame = ttk.Frame(self)
@@ -49,22 +50,21 @@ class ClipboardMultiplexer(tk.Tk):
 
     def add_remote_system(self):
         system_address = self.remote_system_entry.get().strip()
-        if system_address:
+        if system_address and system_address not in self.remote_systems:
+            self.remote_systems.append(system_address)
             self.remote_systems_list.insert(tk.END, system_address)
             self.remote_system_entry.delete(0, tk.END)
         else:
             messagebox.showwarning("Warning", "Please enter a valid system address.")
 
     def remove_selected_system(self):
-        try:
-            selected_indices = self.remote_systems_list.curselection()
-            if not selected_indices:
-                messagebox.showinfo("Info", "Please select a system to remove.")
-                return
-            for index in selected_indices[::-1]:
-                self.remote_systems_list.delete(index)
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not remove selected system: {e}")
+        selected_indices = self.remote_systems_list.curselection()
+        if not selected_indices:
+            messagebox.showinfo("Info", "Please select a system to remove.")
+            return
+        for index in selected_indices[::-1]:
+            self.remote_systems.pop(index)
+            self.remote_systems_list.delete(index)
 
     def send_clipboard_contents(self):
         try:
@@ -73,8 +73,7 @@ class ClipboardMultiplexer(tk.Tk):
             messagebox.showerror("Error", "Failed to get clipboard contents.")
             return
 
-        for idx in range(self.remote_systems_list.size()):
-            system_address = self.remote_systems_list.get(idx)
+        for system_address in self.remote_systems:
             threading.Thread(target=self.send_to_remote_system, args=(system_address, contents)).start()
 
     def send_to_remote_system(self, system_address, contents):
@@ -89,13 +88,11 @@ class ClipboardMultiplexer(tk.Tk):
         selected_indices = self.remote_systems_list.curselection()
         if selected_indices:
             system_address = self.remote_systems_list.get(selected_indices[0])
-            protocol = simpledialog.askstring("Protocol", "Enter protocol (VNC or RDP):")
-            if protocol:
-                protocol = protocol.upper()
-                if protocol in ["VNC", "RDP"]:
-                    self.connect_to_remote_desktop(system_address, protocol)
-                else:
-                    messagebox.showerror("Error", "Invalid protocol. Please enter VNC or RDP.")
+            protocol = simpledialog.askstring("Protocol", "Enter protocol (VNC or RDP):").upper()
+            if protocol in ["VNC", "RDP"]:
+                self.connect_to_remote_desktop(system_address, protocol)
+            else:
+                messagebox.showerror("Error", "Invalid protocol. Please enter VNC or RDP.")
         else:
             messagebox.showinfo("Info", "Please select a system from the list.")
 
@@ -104,10 +101,7 @@ class ClipboardMultiplexer(tk.Tk):
             if protocol == "VNC":
                 self.connect_to_vnc(system_address)
             elif protocol == "RDP":
-                if not self.is_tool("rdesktop"):
-                    messagebox.showerror("Error", "rdesktop is not installed. Please install it manually.")
-                    return
-                command = ["rdesktop", system_address]
+                command = ["mstsc", f"/v:{system_address}"]
                 subprocess.Popen(command)
         except Exception as e:
             self.report_error(f"Error connecting to remote desktop: {e}")
