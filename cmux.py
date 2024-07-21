@@ -5,6 +5,10 @@ import threading
 import subprocess
 import os
 import requests
+import win32clipboard
+import win32con
+import win32com.client
+import winrm
 
 PORT = 22
 RDP_PORT = 3389
@@ -14,39 +18,66 @@ VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.1.2")
-        self.create_widgets()
+        self.title("cMuX V1.1.4")
+        self.geometry("800x600")
+        self.configure(bg='black')
+        self.style = ttk.Style()
+        self.style.configure('Custom.TFrame', background='black')
+        self.style.configure('Custom.TLabel', background='black', foreground='#00FF00')
+        self.style.configure('Custom.TEntry', fieldbackground='black', foreground='#00FF00')
+        self.style.configure('Custom.TButton', background='black', foreground='#00FF00')
+        self.style.configure('Custom.TMenubutton', background='black', foreground='#00FF00')
+        self.style.configure('Custom.TListbox', background='black', foreground='#00FF00')
+
         self.remote_systems = []
+        self.create_widgets()
 
     def create_widgets(self):
         self.create_add_remote_frame()
         self.create_remote_systems_list()
         self.create_transfer_frame()
-        self.create_remote_desktop_frame()
+        self.create_clipboard_menu()
 
     def create_add_remote_frame(self):
-        add_remote_frame = ttk.Frame(self)
-        add_remote_frame.pack(padx=10, pady=10)
+        add_remote_frame = ttk.Frame(self, style='Custom.TFrame')
+        add_remote_frame.pack(padx=10, pady=10, fill=tk.X)
 
-        ttk.Label(add_remote_frame, text="Add Remote System:").pack(side=tk.LEFT)
-        self.remote_system_entry = ttk.Entry(add_remote_frame)
-        self.remote_system_entry.pack(side=tk.LEFT)
-        ttk.Button(add_remote_frame, text="Add", command=self.add_remote_system).pack(side=tk.LEFT)
-        ttk.Button(add_remote_frame, text="Remove", command=self.remove_selected_system).pack(side=tk.LEFT)
+        label = ttk.Label(add_remote_frame, text="Add Remote System:", style='Custom.TLabel')
+        label.pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.remote_system_entry = ttk.Entry(add_remote_frame, style='Custom.TEntry')
+        self.remote_system_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+        
+        add_button = ttk.Button(add_remote_frame, text="Add", command=self.add_remote_system, style='Custom.TButton')
+        add_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        remove_button = ttk.Button(add_remote_frame, text="Remove", command=self.remove_selected_system, style='Custom.TButton')
+        remove_button.pack(side=tk.LEFT)
 
     def create_remote_systems_list(self):
-        self.remote_systems_list = tk.Listbox(self, selectmode=tk.SINGLE)
-        self.remote_systems_list.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        list_frame = ttk.Frame(self, style='Custom.TFrame')
+        list_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        self.remote_systems_list = tk.Listbox(list_frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.remote_systems_list.pack(fill=tk.BOTH, expand=True)
 
     def create_transfer_frame(self):
-        transfer_frame = ttk.Frame(self)
-        transfer_frame.pack(padx=10, pady=10)
-        ttk.Button(transfer_frame, text="Send Clipboard to All", command=self.send_clipboard_contents).pack()
+        transfer_frame = ttk.Frame(self, style='Custom.TFrame')
+        transfer_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        send_clipboard_button = ttk.Button(transfer_frame, text="Send Clipboard to All", command=self.send_clipboard_contents, style='Custom.TButton')
+        send_clipboard_button.pack(side=tk.LEFT, padx=(0, 5))
 
-    def create_remote_desktop_frame(self):
-        remote_desktop_frame = ttk.Frame(self)
-        remote_desktop_frame.pack(padx=10, pady=10)
-        ttk.Button(remote_desktop_frame, text="Connect to Remote Desktop", command=self.on_connect_remote_desktop).pack()
+        send_file_button = ttk.Button(transfer_frame, text="Send Clipboard File to All", command=self.send_clipboard_file, style='Custom.TButton')
+        send_file_button.pack(side=tk.LEFT, padx=(0, 5))
+
+    def create_clipboard_menu(self):
+        menu = tk.Menu(self, bg='black', fg='#00FF00', tearoff=0)
+        self.config(menu=menu)
+        clipboard_menu = tk.Menu(menu, bg='black', fg='#00FF00', tearoff=0)
+        menu.add_cascade(label="Clipboard", menu=clipboard_menu)
+        clipboard_menu.add_command(label="Paste into Current Session", command=self.paste_clipboard_current)
+        clipboard_menu.add_command(label="Paste into All Sessions", command=self.paste_clipboard_all)
 
     def add_remote_system(self):
         system_address = self.remote_system_entry.get().strip()
@@ -76,6 +107,41 @@ class ClipboardMultiplexer(tk.Tk):
         for system_address in self.remote_systems:
             threading.Thread(target=self.send_to_remote_system, args=(system_address, contents)).start()
 
+    def send_clipboard_file(self):
+        username = simpledialog.askstring("Username", "Enter username:", show='*')
+        if not username:
+            return
+        password = simpledialog.askstring("Password", "Enter password:", show='*')
+        if not password:
+            return
+
+        file_path = self.get_clipboard_file()
+        if file_path:
+            for system_address in self.remote_systems:
+                threading.Thread(target=self.send_file_to_remote_system, args=(system_address, file_path, username, password)).start()
+
+    def get_clipboard_file(self):
+        try:
+            win32clipboard.OpenClipboard()
+            data = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+            win32clipboard.CloseClipboard()
+            if data:
+                return data[0]
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to get file from clipboard: {e}")
+            return None
+
+    def send_file_to_remote_system(self, system_address, file_path, username, password):
+        try:
+            session = winrm.Session(f'http://{system_address}:5985/wsman', auth=(username, password))
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            encoded_content = file_content.encode('base64')
+            script = f"$content = [System.Convert]::FromBase64String('{encoded_content}'); [System.IO.File]::WriteAllBytes('{file_path}', $content)"
+            session.run_ps(script)
+        except Exception as e:
+            self.report_error(f"Could not send file to {system_address}: {e}")
+
     def send_to_remote_system(self, system_address, contents):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -84,56 +150,20 @@ class ClipboardMultiplexer(tk.Tk):
         except Exception as e:
             self.report_error(f"Could not send data to {system_address}: {e}")
 
-    def on_connect_remote_desktop(self):
-        selected_indices = self.remote_systems_list.curselection()
-        if selected_indices:
-            system_address = self.remote_systems_list.get(selected_indices[0])
-            protocol = simpledialog.askstring("Protocol", "Enter protocol (VNC or RDP):").upper()
-            if protocol in ["VNC", "RDP"]:
-                self.connect_to_remote_desktop(system_address, protocol)
+    def paste_clipboard_current(self):
+        try:
+            contents = self.clipboard_get()
+            selected_index = self.remote_systems_list.curselection()
+            if selected_index:
+                current_system = self.remote_systems_list.get(selected_index)
+                self.send_to_remote_system(current_system, contents)
             else:
-                messagebox.showerror("Error", "Invalid protocol. Please enter VNC or RDP.")
-        else:
-            messagebox.showinfo("Info", "Please select a system from the list.")
+                messagebox.showinfo("Info", "Please select a system to paste clipboard.")
+        except tk.TclError:
+            messagebox.showerror("Error", "Failed to get clipboard contents.")
 
-    def connect_to_remote_desktop(self, system_address, protocol):
-        try:
-            if protocol == "VNC":
-                self.connect_to_vnc(system_address)
-            elif protocol == "RDP":
-                command = ["mstsc", f"/v:{system_address}"]
-                subprocess.Popen(command)
-        except Exception as e:
-            self.report_error(f"Error connecting to remote desktop: {e}")
-
-    def connect_to_vnc(self, system_address):
-        if not self.is_tool("vncviewer"):
-            messagebox.showinfo("Info", "VNC Viewer is not installed. Downloading now...")
-            self.download_vnc_viewer()
-            if not self.is_tool("vncviewer"):
-                messagebox.showerror("Error", "Failed to install VNC Viewer. Please install it manually.")
-                return
-        try:
-            command = ["vncviewer", system_address]
-            subprocess.Popen(command)
-        except Exception as e:
-            self.report_error(f"Error connecting to VNC server: {e}")
-
-    def download_vnc_viewer(self):
-        local_filename = VNC_VIEWER_DOWNLOAD_URL.split('/')[-1]
-        try:
-            with requests.get(VNC_VIEWER_DOWNLOAD_URL, stream=True) as r:
-                r.raise_for_status()
-                with open(local_filename, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-            subprocess.run(local_filename, shell=True)
-        except requests.RequestException as e:
-            self.report_error(f"Failed to download VNC Viewer: {e}")
-
-    def is_tool(self, name):
-        from shutil import which
-        return which(name) is not None
+    def paste_clipboard_all(self):
+        self.send_clipboard_contents()
 
     def report_error(self, message):
         self.after(0, messagebox.showerror, "Error", message)
