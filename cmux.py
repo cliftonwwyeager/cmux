@@ -17,12 +17,13 @@ VNC_PORTS = [5900, 5901]
 VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-2.3.0-Windows.exe"
 
 class CredentialsDialog(Toplevel):
-    def __init__(self, parent):
+    def __init__(self, parent, on_store_callback):
         super().__init__(parent)
         self.title("Enter Credentials")
         self.geometry("300x150")
         self.configure(bg='black')
 
+        self.on_store_callback = on_store_callback
         self.username_var = StringVar()
         self.password_var = StringVar()
         self.show_password_var = BooleanVar()
@@ -39,7 +40,11 @@ class CredentialsDialog(Toplevel):
             self, text="Show Password", variable=self.show_password_var, style='Custom.TCheckbutton', command=self.toggle_password)
         self.show_password_check.pack(pady=5)
 
-        ttk.Button(self, text="OK", command=self.on_ok, style='Custom.TButton').pack(pady=10)
+        button_frame = ttk.Frame(self, style='Custom.TFrame')
+        button_frame.pack(pady=10)
+
+        ttk.Button(button_frame, text="Store", command=self.on_store, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Cancel", command=self.on_cancel, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
 
     def toggle_password(self):
         if self.show_password_var.get():
@@ -47,21 +52,23 @@ class CredentialsDialog(Toplevel):
         else:
             self.password_entry.config(show='*')
 
-    def on_ok(self):
-        self.username = self.username_var.get()
-        self.password = self.password_var.get()
-        self.destroy()
+    def on_store(self):
+        username = self.username_var.get()
+        password = self.password_var.get()
+        if username and password:
+            self.on_store_callback(username, password)
+            self.destroy()
+        else:
+            messagebox.showwarning("Warning", "Please enter both username and password.")
 
-    def get_credentials(self):
-        self.grab_set()
-        self.wait_window()
-        return self.username, self.password
+    def on_cancel(self):
+        self.destroy()
 
 
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.1.5")
+        self.title("cMuX V1.1.6")
         self.geometry("1000x600")
         self.configure(bg='black')
         self.style = ttk.Style()
@@ -339,12 +346,13 @@ class ClipboardMultiplexer(tk.Tk):
                 del self.active_sessions[system_address]
 
     def add_credentials(self):
-        dialog = CredentialsDialog(self)
-        username, password = dialog.get_credentials()
-        if username and password:
-            self.credentials_store.append((username, password))
-            self.credentials_list.insert(tk.END, username)
-            self.update_credentials_combobox()
+        dialog = CredentialsDialog(self, self.store_credentials)
+        dialog.mainloop()
+
+    def store_credentials(self, username, password):
+        self.credentials_store.append((username, password))
+        self.credentials_list.insert(tk.END, username)
+        self.update_credentials_combobox()
 
     def remove_selected_credential(self):
         selected_indices = self.credentials_list.curselection()
