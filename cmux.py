@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, Toplevel, StringVar, BooleanVar
 import socket
 import threading
 import subprocess
 import os
 import requests
+import base64
 import win32clipboard
 import win32con
 import win32com.client
@@ -15,11 +16,53 @@ RDP_PORT = 3389
 VNC_PORTS = [5900, 5901]
 VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-2.3.0-Windows.exe"
 
+class CredentialsDialog(Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Enter Credentials")
+        self.geometry("300x150")
+        self.configure(bg='black')
+
+        self.username_var = StringVar()
+        self.password_var = StringVar()
+        self.show_password_var = BooleanVar()
+
+        ttk.Label(self, text="Username:", style='Custom.TLabel').pack(pady=5)
+        self.username_entry = ttk.Entry(self, textvariable=self.username_var, style='Custom.TEntry')
+        self.username_entry.pack(pady=5)
+
+        ttk.Label(self, text="Password:", style='Custom.TLabel').pack(pady=5)
+        self.password_entry = ttk.Entry(self, textvariable=self.password_var, style='Custom.TEntry', show='*')
+        self.password_entry.pack(pady=5)
+
+        self.show_password_check = ttk.Checkbutton(
+            self, text="Show Password", variable=self.show_password_var, style='Custom.TCheckbutton', command=self.toggle_password)
+        self.show_password_check.pack(pady=5)
+
+        ttk.Button(self, text="OK", command=self.on_ok, style='Custom.TButton').pack(pady=10)
+
+    def toggle_password(self):
+        if self.show_password_var.get():
+            self.password_entry.config(show='')
+        else:
+            self.password_entry.config(show='*')
+
+    def on_ok(self):
+        self.username = self.username_var.get()
+        self.password = self.password_var.get()
+        self.destroy()
+
+    def get_credentials(self):
+        self.grab_set()
+        self.wait_window()
+        return self.username, self.password
+
+
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.1.4")
-        self.geometry("800x600")
+        self.title("cMuX V1.1.5")
+        self.geometry("1000x600")
         self.configure(bg='black')
         self.style = ttk.Style()
         self.style.configure('Custom.TFrame', background='black')
@@ -28,15 +71,21 @@ class ClipboardMultiplexer(tk.Tk):
         self.style.configure('Custom.TButton', background='black', foreground='#00FF00')
         self.style.configure('Custom.TMenubutton', background='black', foreground='#00FF00')
         self.style.configure('Custom.TListbox', background='black', foreground='#00FF00')
+        self.style.configure('Custom.TCheckbutton', background='black', foreground='#00FF00')
+        self.style.configure('Custom.TCombobox', fieldbackground='black', foreground='#00FF00')
 
         self.remote_systems = []
+        self.active_sessions = {}
+        self.credentials_store = []
         self.create_widgets()
-
+        
     def create_widgets(self):
         self.create_add_remote_frame()
         self.create_remote_systems_list()
         self.create_transfer_frame()
         self.create_clipboard_menu()
+        self.create_session_sidebar()
+        self.create_credentials_store()
 
     def create_add_remote_frame(self):
         add_remote_frame = ttk.Frame(self, style='Custom.TFrame')
@@ -70,6 +119,12 @@ class ClipboardMultiplexer(tk.Tk):
 
         send_file_button = ttk.Button(transfer_frame, text="Send Clipboard File to All", command=self.send_clipboard_file, style='Custom.TButton')
         send_file_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        connect_rdp_button = ttk.Button(transfer_frame, text="Connect RDP", command=self.connect_rdp, style='Custom.TButton')
+        connect_rdp_button.pack(side=tk.LEFT, padx=(0, 5))
+
+        connect_vnc_button = ttk.Button(transfer_frame, text="Connect VNC", command=self.connect_vnc, style='Custom.TButton')
+        connect_vnc_button.pack(side=tk.LEFT, padx=(0, 5))
 
     def create_clipboard_menu(self):
         menu = tk.Menu(self, bg='black', fg='#00FF00', tearoff=0)
@@ -78,6 +133,41 @@ class ClipboardMultiplexer(tk.Tk):
         menu.add_cascade(label="Clipboard", menu=clipboard_menu)
         clipboard_menu.add_command(label="Paste into Current Session", command=self.paste_clipboard_current)
         clipboard_menu.add_command(label="Paste into All Sessions", command=self.paste_clipboard_all)
+
+    def create_session_sidebar(self):
+        sidebar_frame = ttk.Frame(self, style='Custom.TFrame')
+        sidebar_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+
+        label = ttk.Label(sidebar_frame, text="Active Sessions:", style='Custom.TLabel')
+        label.pack()
+
+        self.session_list = tk.Listbox(sidebar_frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.session_list.pack(fill=tk.BOTH, expand=True)
+
+        self.session_list.bind('<<ListboxSelect>>', self.bring_session_to_foreground)
+
+    def create_credentials_store(self):
+        credentials_frame = ttk.Frame(self, style='Custom.TFrame')
+        credentials_frame.pack(padx=10, pady=10, fill=tk.X)
+
+        add_credentials_button = ttk.Button(credentials_frame, text="Add Credentials", command=self.add_credentials, style='Custom.TButton')
+        add_credentials_button.pack(side=tk.LEFT, padx=(0, 5))
+
+        remove_credentials_button = ttk.Button(credentials_frame, text="Remove Credentials", command=self.remove_selected_credential, style='Custom.TButton')
+        remove_credentials_button.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.credentials_list = tk.Listbox(credentials_frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.credentials_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        credentials_selection_frame = ttk.Frame(credentials_frame, style='Custom.TFrame')
+        credentials_selection_frame.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
+
+        label = ttk.Label(credentials_selection_frame, text="Select Credentials:", style='Custom.TLabel')
+        label.pack()
+
+        self.selected_credentials = tk.StringVar()
+        self.credentials_combobox = ttk.Combobox(credentials_selection_frame, textvariable=self.selected_credentials, style='Custom.TCombobox', state='readonly')
+        self.credentials_combobox.pack(fill=tk.X)
 
     def add_remote_system(self):
         system_address = self.remote_system_entry.get().strip()
@@ -108,26 +198,35 @@ class ClipboardMultiplexer(tk.Tk):
             threading.Thread(target=self.send_to_remote_system, args=(system_address, contents)).start()
 
     def send_clipboard_file(self):
-        username = simpledialog.askstring("Username", "Enter username:", show='*')
-        if not username:
+        if not self.credentials_store:
+            messagebox.showerror("Error", "No credentials stored. Please add credentials first.")
             return
-        password = simpledialog.askstring("Password", "Enter password:", show='*')
-        if not password:
+
+        selected_credential_index = self.credentials_combobox.current()
+        if selected_credential_index == -1:
+            messagebox.showerror("Error", "Please select credentials to use.")
             return
 
         file_path = self.get_clipboard_file()
         if file_path:
+            username, password = self.credentials_store[selected_credential_index]
             for system_address in self.remote_systems:
                 threading.Thread(target=self.send_file_to_remote_system, args=(system_address, file_path, username, password)).start()
 
     def get_clipboard_file(self):
         try:
             win32clipboard.OpenClipboard()
-            data = win32clipboard.GetClipboardData(win32con.CF_HDROP)
-            win32clipboard.CloseClipboard()
-            if data:
-                return data[0]
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
+                data = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+                win32clipboard.CloseClipboard()
+                if data:
+                    return data[0]
+            else:
+                win32clipboard.CloseClipboard()
+                messagebox.showerror("Error", "Clipboard does not contain a valid file format.")
+                return None
         except Exception as e:
+            win32clipboard.CloseClipboard()
             messagebox.showerror("Error", f"Failed to get file from clipboard: {e}")
             return None
 
@@ -136,8 +235,9 @@ class ClipboardMultiplexer(tk.Tk):
             session = winrm.Session(f'http://{system_address}:5985/wsman', auth=(username, password))
             with open(file_path, 'rb') as f:
                 file_content = f.read()
-            encoded_content = file_content.encode('base64')
-            script = f"$content = [System.Convert]::FromBase64String('{encoded_content}'); [System.IO.File]::WriteAllBytes('{file_path}', $content)"
+            encoded_content = base64.b64encode(file_content).decode('utf-8')
+            desktop_path = f"C:\\Users\\{username}\\Desktop\\{os.path.basename(file_path)}"
+            script = f"$content = [System.Convert]::FromBase64String('{encoded_content}'); [System.IO.File]::WriteAllBytes('{desktop_path}', $content)"
             session.run_ps(script)
         except Exception as e:
             self.report_error(f"Could not send file to {system_address}: {e}")
@@ -167,6 +267,97 @@ class ClipboardMultiplexer(tk.Tk):
 
     def report_error(self, message):
         self.after(0, messagebox.showerror, "Error", message)
+
+    def connect_rdp(self):
+        selected_index = self.remote_systems_list.curselection()
+        if not selected_index:
+            messagebox.showinfo("Info", "Please select a system to connect via RDP.")
+            return
+        system_address = self.remote_systems_list.get(selected_index)
+        selected_credential_index = self.credentials_combobox.current()
+        if selected_credential_index == -1:
+            messagebox.showerror("Error", "Please select credentials to use.")
+            return
+        username, password = self.credentials_store[selected_credential_index]
+        try:
+            proc = subprocess.Popen(["mstsc", f"/v:{system_address} /u:{username} /p:{password}"])
+            self.active_sessions[system_address] = proc
+            self.session_list.insert(tk.END, f"RDP: {system_address}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not connect to {system_address} via RDP: {e}")
+
+    def connect_vnc(self):
+        selected_index = self.remote_systems_list.curselection()
+        if not selected_index:
+            messagebox.showinfo("Info", "Please select a system to connect via VNC.")
+            return
+        system_address = self.remote_systems_list.get(selected_index)
+        selected_credential_index = self.credentials_combobox.current()
+        if selected_credential_index == -1:
+            messagebox.showerror("Error", "Please select credentials to use.")
+            return
+        username, password = self.credentials_store[selected_credential_index]
+        vnc_viewer_path = self.download_vnc_viewer()
+        if vnc_viewer_path:
+            try:
+                proc = subprocess.Popen([vnc_viewer_path, system_address, f"-username={username}", f"-password={password}"])
+                self.active_sessions[system_address] = proc
+                self.session_list.insert(tk.END, f"VNC: {system_address}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not connect to {system_address} via VNC: {e}")
+
+    def download_vnc_viewer(self):
+        vnc_viewer_path = os.path.join(os.getenv('TEMP'), "VNC-Viewer.exe")
+        if not os.path.exists(vnc_viewer_path):
+            try:
+                response = requests.get(VNC_VIEWER_DOWNLOAD_URL)
+                with open(vnc_viewer_path, 'wb') as f:
+                    f.write(response.content)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to download VNC Viewer: {e}")
+                return None
+        return vnc_viewer_path
+
+    def bring_session_to_foreground(self, event):
+        selected_index = self.session_list.curselection()
+        if not selected_index:
+            return
+        session_name = self.session_list.get(selected_index[0])
+        connection_type, system_address = session_name.split(': ')
+        if system_address in self.active_sessions:
+            proc = self.active_sessions[system_address]
+            if proc.poll() is None:
+                if connection_type == "RDP":
+                    subprocess.run(["mstsc", f"/v:{system_address}"])
+                elif connection_type == "VNC":
+                    vnc_viewer_path = self.download_vnc_viewer()
+                    if vnc_viewer_path:
+                        subprocess.run([vnc_viewer_path, system_address])
+            else:
+                messagebox.showerror("Error", f"Session to {system_address} has been closed.")
+                self.session_list.delete(selected_index[0])
+                del self.active_sessions[system_address]
+
+    def add_credentials(self):
+        dialog = CredentialsDialog(self)
+        username, password = dialog.get_credentials()
+        if username and password:
+            self.credentials_store.append((username, password))
+            self.credentials_list.insert(tk.END, username)
+            self.update_credentials_combobox()
+
+    def remove_selected_credential(self):
+        selected_indices = self.credentials_list.curselection()
+        if not selected_indices:
+            messagebox.showinfo("Info", "Please select a credential to remove.")
+            return
+        for index in selected_indices[::-1]:
+            self.credentials_store.pop(index)
+            self.credentials_list.delete(index)
+        self.update_credentials_combobox()
+
+    def update_credentials_combobox(self):
+        self.credentials_combobox['values'] = [cred[0] for cred in self.credentials_store]
 
 if __name__ == "__main__":
     app = ClipboardMultiplexer()
