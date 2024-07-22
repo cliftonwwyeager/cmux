@@ -68,7 +68,7 @@ class CredentialsDialog(Toplevel):
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.1.6")
+        self.title("cMuX V1.1.7")
         self.geometry("1000x600")
         self.configure(bg='black')
         self.style = ttk.Style()
@@ -287,11 +287,59 @@ class ClipboardMultiplexer(tk.Tk):
             return
         username, password = self.credentials_store[selected_credential_index]
         try:
-            proc = subprocess.Popen(["mstsc", f"/v:{system_address} /u:{username} /p:{password}"])
+            rdp_file_path = self.create_rdp_file(system_address, username)
+            proc = subprocess.Popen(["mstsc", rdp_file_path])
             self.active_sessions[system_address] = proc
             self.session_list.insert(tk.END, f"RDP: {system_address}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not connect to {system_address} via RDP: {e}")
+
+    def create_rdp_file(self, system_address, username):
+        rdp_file_content = f"""
+        screen mode id:i:2
+        use multimon:i:0
+        session bpp:i:32
+        desktopwidth:i:1920
+        desktopheight:i:1080
+        compression:i:1
+        keyboardhook:i:2
+        audiocapturemode:i:0
+        videoplaybackmode:i:1
+        connection type:i:2
+        networkautodetect:i:1
+        bandwidthautodetect:i:1
+        displayconnectionbar:i:1
+        enableworkspacereconnect:i:0
+        disable wallpaper:i:0
+        allow font smoothing:i:0
+        allow desktop composition:i:0
+        disable full window drag:i:1
+        disable menu anims:i:1
+        disable themes:i:0
+        disable cursor setting:i:0
+        bitmapcachepersistenable:i:1
+        full address:s:{system_address}
+        username:s:{username}
+        prompt for credentials:i:1
+        negotiate security layer:i:1
+        remoteapplicationmode:i:0
+        alternate shell:s:
+        shell working directory:s:
+        gatewayhostname:s:
+        gatewayusagemethod:i:4
+        gatewaycredentialssource:i:4
+        gatewayprofileusagemethod:i:0
+        promptcredentialonce:i:1
+        gatewaybrokeringtype:i:0
+        use redirection server name:i:0
+        rdgiskdcproxy:i:0
+        kdcproxyname:s:
+        """
+
+        rdp_file_path = os.path.join(os.getenv('TEMP'), f"{system_address}.rdp")
+        with open(rdp_file_path, 'w') as rdp_file:
+            rdp_file.write(rdp_file_content.strip())
+        return rdp_file_path
 
     def connect_vnc(self):
         selected_index = self.remote_systems_list.curselection()
@@ -335,7 +383,8 @@ class ClipboardMultiplexer(tk.Tk):
             proc = self.active_sessions[system_address]
             if proc.poll() is None:
                 if connection_type == "RDP":
-                    subprocess.run(["mstsc", f"/v:{system_address}"])
+                    rdp_file_path = self.create_rdp_file(system_address, self.credentials_store[self.credentials_combobox.current()][0])
+                    subprocess.run(["mstsc", rdp_file_path])
                 elif connection_type == "VNC":
                     vnc_viewer_path = self.download_vnc_viewer()
                     if vnc_viewer_path:
