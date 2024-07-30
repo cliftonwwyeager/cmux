@@ -6,9 +6,7 @@ import subprocess
 import os
 import requests
 import base64
-import win32clipboard
-import win32con
-import win32com.client
+import pyperclip
 import winrm
 
 PORT = 22
@@ -64,11 +62,10 @@ class CredentialsDialog(Toplevel):
     def on_cancel(self):
         self.destroy()
 
-
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.1.7")
+        self.title("cMuX V1.1.8")
         self.geometry("1000x600")
         self.configure(bg='black')
         self.style = ttk.Style()
@@ -196,9 +193,9 @@ class ClipboardMultiplexer(tk.Tk):
 
     def send_clipboard_contents(self):
         try:
-            contents = self.clipboard_get()
-        except tk.TclError:
-            messagebox.showerror("Error", "Failed to get clipboard contents.")
+            contents = pyperclip.paste()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to get clipboard contents: {e}")
             return
 
         for system_address in self.remote_systems:
@@ -223,11 +220,11 @@ class ClipboardMultiplexer(tk.Tk):
     def get_clipboard_file(self):
         try:
             win32clipboard.OpenClipboard()
-            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
-                data = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+            if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_HDROP):
+                file_paths = win32clipboard.GetClipboardData(win32clipboard.CF_HDROP)
                 win32clipboard.CloseClipboard()
-                if data:
-                    return data[0]
+                if file_paths:
+                    return file_paths[0]
             else:
                 win32clipboard.CloseClipboard()
                 messagebox.showerror("Error", "Clipboard does not contain a valid file format.")
@@ -259,15 +256,15 @@ class ClipboardMultiplexer(tk.Tk):
 
     def paste_clipboard_current(self):
         try:
-            contents = self.clipboard_get()
+            contents = pyperclip.paste()
             selected_index = self.remote_systems_list.curselection()
             if selected_index:
                 current_system = self.remote_systems_list.get(selected_index)
                 self.send_to_remote_system(current_system, contents)
             else:
                 messagebox.showinfo("Info", "Please select a system to paste clipboard.")
-        except tk.TclError:
-            messagebox.showerror("Error", "Failed to get clipboard contents.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to get clipboard contents: {e}")
 
     def paste_clipboard_all(self):
         self.send_clipboard_contents()
