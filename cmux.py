@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, Toplevel, StringVar, BooleanVar
+from tkinter import ttk, messagebox, Toplevel, StringVar, BooleanVar
 import socket
 import threading
 import subprocess
@@ -12,7 +12,7 @@ import winrm
 PORT = 22
 RDP_PORT = 3389
 VNC_PORTS = [5900, 5901]
-VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-2.3.0-Windows.exe"
+VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-7.12.1-Windows.exe"
 
 class CredentialsDialog(Toplevel):
     def __init__(self, parent, on_store_callback):
@@ -26,17 +26,16 @@ class CredentialsDialog(Toplevel):
         self.password_var = StringVar()
         self.show_password_var = BooleanVar()
 
+        self.create_widgets()
+
+    def create_widgets(self):
         ttk.Label(self, text="Username:", style='Custom.TLabel').pack(pady=5)
-        self.username_entry = ttk.Entry(self, textvariable=self.username_var, style='Custom.TEntry')
-        self.username_entry.pack(pady=5)
-
+        ttk.Entry(self, textvariable=self.username_var, style='Custom.TEntry').pack(pady=5)
+        
         ttk.Label(self, text="Password:", style='Custom.TLabel').pack(pady=5)
-        self.password_entry = ttk.Entry(self, textvariable=self.password_var, style='Custom.TEntry', show='*')
-        self.password_entry.pack(pady=5)
-
-        self.show_password_check = ttk.Checkbutton(
-            self, text="Show Password", variable=self.show_password_var, style='Custom.TCheckbutton', command=self.toggle_password)
-        self.show_password_check.pack(pady=5)
+        ttk.Entry(self, textvariable=self.password_var, style='Custom.TEntry', show='*').pack(pady=5)
+        
+        ttk.Checkbutton(self, text="Show Password", variable=self.show_password_var, style='Custom.TCheckbutton', command=self.toggle_password).pack(pady=5)
 
         button_frame = ttk.Frame(self, style='Custom.TFrame')
         button_frame.pack(pady=10)
@@ -45,10 +44,7 @@ class CredentialsDialog(Toplevel):
         ttk.Button(button_frame, text="Cancel", command=self.on_cancel, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
 
     def toggle_password(self):
-        if self.show_password_var.get():
-            self.password_entry.config(show='')
-        else:
-            self.password_entry.config(show='*')
+        self.password_entry.config(show='' if self.show_password_var.get() else '*')
 
     def on_store(self):
         username = self.username_var.get()
@@ -62,27 +58,34 @@ class CredentialsDialog(Toplevel):
     def on_cancel(self):
         self.destroy()
 
+
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("cMuX V1.1.8")
         self.geometry("1000x600")
         self.configure(bg='black')
-        self.style = ttk.Style()
-        self.style.configure('Custom.TFrame', background='black')
-        self.style.configure('Custom.TLabel', background='black', foreground='#00FF00')
-        self.style.configure('Custom.TEntry', fieldbackground='black', foreground='#00FF00')
-        self.style.configure('Custom.TButton', background='black', foreground='#00FF00')
-        self.style.configure('Custom.TMenubutton', background='black', foreground='#00FF00')
-        self.style.configure('Custom.TListbox', background='black', foreground='#00FF00')
-        self.style.configure('Custom.TCheckbutton', background='black', foreground='#00FF00')
-        self.style.configure('Custom.TCombobox', fieldbackground='black', foreground='#00FF00')
+        
+        self.style = self.create_styles()
 
         self.remote_systems = []
         self.active_sessions = {}
         self.credentials_store = []
+
         self.create_widgets()
-        
+
+    def create_styles(self):
+        style = ttk.Style()
+        style.configure('Custom.TFrame', background='black')
+        style.configure('Custom.TLabel', background='black', foreground='#00FF00')
+        style.configure('Custom.TEntry', fieldbackground='black', foreground='#00FF00')
+        style.configure('Custom.TButton', background='black', foreground='#00FF00')
+        style.configure('Custom.TMenubutton', background='black', foreground='#00FF00')
+        style.configure('Custom.TListbox', background='black', foreground='#00FF00')
+        style.configure('Custom.TCheckbutton', background='black', foreground='#00FF00')
+        style.configure('Custom.TCombobox', fieldbackground='black', foreground='#00FF00')
+        return style
+
     def create_widgets(self):
         self.create_add_remote_frame()
         self.create_remote_systems_list()
@@ -92,43 +95,32 @@ class ClipboardMultiplexer(tk.Tk):
         self.create_credentials_store()
 
     def create_add_remote_frame(self):
-        add_remote_frame = ttk.Frame(self, style='Custom.TFrame')
-        add_remote_frame.pack(padx=10, pady=10, fill=tk.X)
+        frame = ttk.Frame(self, style='Custom.TFrame')
+        frame.pack(padx=10, pady=10, fill=tk.X)
 
-        label = ttk.Label(add_remote_frame, text="Add Remote System:", style='Custom.TLabel')
-        label.pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(frame, text="Add Remote System:", style='Custom.TLabel').pack(side=tk.LEFT, padx=(0, 5))
         
-        self.remote_system_entry = ttk.Entry(add_remote_frame, style='Custom.TEntry')
+        self.remote_system_entry = ttk.Entry(frame, style='Custom.TEntry')
         self.remote_system_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
         
-        add_button = ttk.Button(add_remote_frame, text="Add", command=self.add_remote_system, style='Custom.TButton')
-        add_button.pack(side=tk.LEFT, padx=(0, 5))
-        
-        remove_button = ttk.Button(add_remote_frame, text="Remove", command=self.remove_selected_system, style='Custom.TButton')
-        remove_button.pack(side=tk.LEFT)
+        ttk.Button(frame, text="Add", command=self.add_remote_system, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Remove", command=self.remove_selected_system, style='Custom.TButton').pack(side=tk.LEFT)
 
     def create_remote_systems_list(self):
-        list_frame = ttk.Frame(self, style='Custom.TFrame')
-        list_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        frame = ttk.Frame(self, style='Custom.TFrame')
+        frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-        self.remote_systems_list = tk.Listbox(list_frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.remote_systems_list = tk.Listbox(frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.remote_systems_list.pack(fill=tk.BOTH, expand=True)
 
     def create_transfer_frame(self):
-        transfer_frame = ttk.Frame(self, style='Custom.TFrame')
-        transfer_frame.pack(padx=10, pady=10, fill=tk.X)
-        
-        send_clipboard_button = ttk.Button(transfer_frame, text="Send Clipboard to All", command=self.send_clipboard_contents, style='Custom.TButton')
-        send_clipboard_button.pack(side=tk.LEFT, padx=(0, 5))
+        frame = ttk.Frame(self, style='Custom.TFrame')
+        frame.pack(padx=10, pady=10, fill=tk.X)
 
-        send_file_button = ttk.Button(transfer_frame, text="Send Clipboard File to All", command=self.send_clipboard_file, style='Custom.TButton')
-        send_file_button.pack(side=tk.LEFT, padx=(0, 5))
-        
-        connect_rdp_button = ttk.Button(transfer_frame, text="Connect RDP", command=self.connect_rdp, style='Custom.TButton')
-        connect_rdp_button.pack(side=tk.LEFT, padx=(0, 5))
-
-        connect_vnc_button = ttk.Button(transfer_frame, text="Connect VNC", command=self.connect_vnc, style='Custom.TButton')
-        connect_vnc_button.pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Send Clipboard to All", command=self.send_clipboard_contents, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Send Clipboard File to All", command=self.send_clipboard_file, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Connect RDP", command=self.connect_rdp, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Connect VNC", command=self.connect_vnc, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
 
     def create_clipboard_menu(self):
         menu = tk.Menu(self, bg='black', fg='#00FF00', tearoff=0)
@@ -139,38 +131,30 @@ class ClipboardMultiplexer(tk.Tk):
         clipboard_menu.add_command(label="Paste into All Sessions", command=self.paste_clipboard_all)
 
     def create_session_sidebar(self):
-        sidebar_frame = ttk.Frame(self, style='Custom.TFrame')
-        sidebar_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
+        frame = ttk.Frame(self, style='Custom.TFrame')
+        frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
 
-        label = ttk.Label(sidebar_frame, text="Active Sessions:", style='Custom.TLabel')
-        label.pack()
+        ttk.Label(frame, text="Active Sessions:", style='Custom.TLabel').pack()
 
-        self.session_list = tk.Listbox(sidebar_frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.session_list = tk.Listbox(frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.session_list.pack(fill=tk.BOTH, expand=True)
 
         self.session_list.bind('<<ListboxSelect>>', self.bring_session_to_foreground)
 
     def create_credentials_store(self):
-        credentials_frame = ttk.Frame(self, style='Custom.TFrame')
-        credentials_frame.pack(padx=10, pady=10, fill=tk.X)
+        frame = ttk.Frame(self, style='Custom.TFrame')
+        frame.pack(padx=10, pady=10, fill=tk.X)
 
-        add_credentials_button = ttk.Button(credentials_frame, text="Add Credentials", command=self.add_credentials, style='Custom.TButton')
-        add_credentials_button.pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Add Credentials", command=self.add_credentials, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(frame, text="Remove Credentials", command=self.remove_selected_credential, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
 
-        remove_credentials_button = ttk.Button(credentials_frame, text="Remove Credentials", command=self.remove_selected_credential, style='Custom.TButton')
-        remove_credentials_button.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.credentials_list = tk.Listbox(credentials_frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.credentials_list = tk.Listbox(frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.credentials_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        credentials_selection_frame = ttk.Frame(credentials_frame, style='Custom.TFrame')
-        credentials_selection_frame.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
+        ttk.Label(frame, text="Select Credentials:", style='Custom.TLabel').pack(side=tk.LEFT)
 
-        label = ttk.Label(credentials_selection_frame, text="Select Credentials:", style='Custom.TLabel')
-        label.pack()
-
-        self.selected_credentials = tk.StringVar()
-        self.credentials_combobox = ttk.Combobox(credentials_selection_frame, textvariable=self.selected_credentials, style='Custom.TCombobox', state='readonly')
+        self.selected_credentials = StringVar()
+        self.credentials_combobox = ttk.Combobox(frame, textvariable=self.selected_credentials, style='Custom.TCombobox', state='readonly')
         self.credentials_combobox.pack(fill=tk.X)
 
     def add_remote_system(self):
@@ -192,10 +176,9 @@ class ClipboardMultiplexer(tk.Tk):
             self.remote_systems_list.delete(index)
 
     def send_clipboard_contents(self):
-        try:
-            contents = pyperclip.paste()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to get clipboard contents: {e}")
+        contents = pyperclip.paste()
+        if not contents:
+            messagebox.showerror("Error", "Clipboard is empty.")
             return
 
         for system_address in self.remote_systems:
@@ -219,6 +202,7 @@ class ClipboardMultiplexer(tk.Tk):
 
     def get_clipboard_file(self):
         try:
+            import win32clipboard
             win32clipboard.OpenClipboard()
             if win32clipboard.IsClipboardFormatAvailable(win32clipboard.CF_HDROP):
                 file_paths = win32clipboard.GetClipboardData(win32clipboard.CF_HDROP)
@@ -230,7 +214,6 @@ class ClipboardMultiplexer(tk.Tk):
                 messagebox.showerror("Error", "Clipboard does not contain a valid file format.")
                 return None
         except Exception as e:
-            win32clipboard.CloseClipboard()
             messagebox.showerror("Error", f"Failed to get file from clipboard: {e}")
             return None
 
@@ -255,16 +238,13 @@ class ClipboardMultiplexer(tk.Tk):
             self.report_error(f"Could not send data to {system_address}: {e}")
 
     def paste_clipboard_current(self):
-        try:
-            contents = pyperclip.paste()
-            selected_index = self.remote_systems_list.curselection()
-            if selected_index:
-                current_system = self.remote_systems_list.get(selected_index)
-                self.send_to_remote_system(current_system, contents)
-            else:
-                messagebox.showinfo("Info", "Please select a system to paste clipboard.")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to get clipboard contents: {e}")
+        contents = pyperclip.paste()
+        selected_index = self.remote_systems_list.curselection()
+        if selected_index:
+            current_system = self.remote_systems_list.get(selected_index)
+            self.send_to_remote_system(current_system, contents)
+        else:
+            messagebox.showinfo("Info", "Please select a system to paste clipboard.")
 
     def paste_clipboard_all(self):
         self.send_clipboard_contents()
@@ -412,6 +392,7 @@ class ClipboardMultiplexer(tk.Tk):
 
     def update_credentials_combobox(self):
         self.credentials_combobox['values'] = [cred[0] for cred in self.credentials_store]
+
 
 if __name__ == "__main__":
     app = ClipboardMultiplexer()
