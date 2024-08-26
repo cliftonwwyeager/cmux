@@ -62,7 +62,7 @@ class CredentialsDialog(Toplevel):
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.1.8")
+        self.title("cMuX V1.1.9")
         self.geometry("1000x600")
         self.configure(bg='black')
         
