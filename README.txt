@@ -7,4 +7,4 @@
 ╚██████╗██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗    
  ╚═════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝    
                                         
-Clipboard multiplexer/Mini RDP client written in Python - v1.2.0
+Clipboard multiplexer/Mini RDP client written in Python - v1.3.0
