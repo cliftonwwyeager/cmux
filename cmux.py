@@ -12,35 +12,28 @@ import winrm
 from pyvim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
 from cryptography.fernet import Fernet
-
 try:
     import win32clipboard
 except ImportError:
     win32clipboard = None
-
 PORT = 22
-VNC_VIEWER_DOWNLOAD_URL = (
-    "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-2.3.0-Windows.exe"
-)
-
-def traverse_inventory(entity, vm_names):
+VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-2.3.0-Windows.exe"
+def traverse_inventory_for_objects(entity, vm_objects):
     if isinstance(entity, vim.Datacenter):
-        traverse_inventory(entity.vmFolder, vm_names)
+        traverse_inventory_for_objects(entity.vmFolder, vm_objects)
     elif isinstance(entity, vim.Folder):
         for child in entity.childEntity:
-            traverse_inventory(child, vm_names)
+            traverse_inventory_for_objects(child, vm_objects)
     elif isinstance(entity, vim.VirtualApp):
-        for child in entity.vm:
-            traverse_inventory(child, vm_names)
+        for child_vm in entity.vm:
+            traverse_inventory_for_objects(child_vm, vm_objects)
     elif isinstance(entity, vim.VirtualMachine):
-        vm_names.append(entity.name)
-
-def get_all_vm_names(content):
-    vm_names = []
+        vm_objects.append(entity)
+def get_all_vm_objects(content):
+    vm_objects = []
     for child_entity in content.rootFolder.childEntity:
-        traverse_inventory(child_entity, vm_names)
-    return vm_names
-
+        traverse_inventory_for_objects(child_entity, vm_objects)
+    return vm_objects
 class CredentialsDialog(Toplevel):
     def __init__(self, parent, on_store_callback):
         super().__init__(parent)
@@ -53,33 +46,22 @@ class CredentialsDialog(Toplevel):
         self.password_var = StringVar()
         self.show_password_var = BooleanVar()
         self.create_widgets()
-
     def create_widgets(self):
         ttk.Label(self, text="Username:", style='Custom.TLabel').pack(pady=5)
         ttk.Entry(self, textvariable=self.username_var, style='Custom.TEntry').pack(pady=5)
         ttk.Label(self, text="Password:", style='Custom.TLabel').pack(pady=5)
-        self.password_entry = ttk.Entry(
-            self, textvariable=self.password_var, style='Custom.TEntry', show='*'
-        )
+        self.password_entry = ttk.Entry(self, textvariable=self.password_var, style='Custom.TEntry', show='*')
         self.password_entry.pack(pady=5)
-        ttk.Checkbutton(
-            self,
-            text="Show Password",
-            variable=self.show_password_var,
-            style='Custom.TCheckbutton',
-            command=self.toggle_password
-        ).pack(pady=5)
+        ttk.Checkbutton(self, text="Show Password", variable=self.show_password_var, style='Custom.TCheckbutton', command=self.toggle_password).pack(pady=5)
         f = ttk.Frame(self, style='Custom.TFrame')
         f.pack(pady=10)
         ttk.Button(f, text="Store", command=self.on_store, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f, text="Cancel", command=self.on_cancel, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
-
     def toggle_password(self):
         if self.show_password_var.get():
             self.password_entry.config(show='')
         else:
             self.password_entry.config(show='*')
-
     def on_store(self):
         u = self.username_var.get().strip()
         p = self.password_var.get()
@@ -88,10 +70,8 @@ class CredentialsDialog(Toplevel):
             self.destroy()
         else:
             messagebox.showwarning("Warning", "Please enter both username and password.")
-
     def on_cancel(self):
         self.destroy()
-
 class VCenterImportDialog(tk.Toplevel):
     def __init__(self, parent, encryption_key, on_import_callback):
         super().__init__(parent)
@@ -103,35 +83,26 @@ class VCenterImportDialog(tk.Toplevel):
         self.fernet = Fernet(self.encryption_key)
         self.on_import_callback = on_import_callback
         self.create_widgets()
-
     def create_widgets(self):
         ttk.Label(self, text="vCenter Host/IP:", style='Custom.TLabel').pack(pady=5)
         self.vcenter_host_var = tk.StringVar()
         ttk.Entry(self, textvariable=self.vcenter_host_var, style='Custom.TEntry').pack(pady=5)
-
         ttk.Label(self, text="Username:", style='Custom.TLabel').pack(pady=5)
         self.username_var = tk.StringVar()
         ttk.Entry(self, textvariable=self.username_var, style='Custom.TEntry').pack(pady=5)
-
         ttk.Label(self, text="Password:", style='Custom.TLabel').pack(pady=5)
         self.password_var = tk.StringVar()
-        self.password_entry = ttk.Entry(
-            self, textvariable=self.password_var, style='Custom.TEntry', show='*'
-        )
+        self.password_entry = ttk.Entry(self, textvariable=self.password_var, style='Custom.TEntry', show='*')
         self.password_entry.pack(pady=5)
-
         ttk.Label(self, text="CA Certificate Path (Optional):", style='Custom.TLabel').pack(pady=5)
         self.ca_cert_var = tk.StringVar()
         ttk.Entry(self, textvariable=self.ca_cert_var, style='Custom.TEntry').pack(pady=5)
-
         frame = ttk.Frame(self, style='Custom.TFrame')
         frame.pack(pady=10)
         ttk.Button(frame, text="Import", command=self.on_import, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(frame, text="Cancel", command=self.on_cancel, style='Custom.TButton').pack(side=tk.LEFT)
-
     def on_cancel(self):
         self.destroy()
-
     def on_import(self):
         host = self.vcenter_host_var.get().strip()
         user = self.username_var.get().strip()
@@ -141,7 +112,6 @@ class VCenterImportDialog(tk.Toplevel):
             messagebox.showerror("Error", "Please enter the required vCenter host, username, and password.")
             return
         self.do_vcenter_import(host, user, pwd, ca_cert_path)
-
     def do_vcenter_import(self, host, user, pwd, ca_cert_path):
         enc_user = self.fernet.encrypt(user.encode())
         enc_pwd = self.fernet.encrypt(pwd.encode())
@@ -154,36 +124,41 @@ class VCenterImportDialog(tk.Toplevel):
                     context = ssl.create_default_context()
                     context.check_hostname = False
                     context.verify_mode = ssl.CERT_NONE
-
                 dec_user = self.fernet.decrypt(enc_user).decode()
                 dec_pwd = self.fernet.decrypt(enc_pwd).decode()
-
-                si = SmartConnect(
-                    host=host,
-                    user=dec_user,
-                    pwd=dec_pwd,
-                    port=443,
-                    sslContext=context
-                )
+                si = SmartConnect(host=host, user=dec_user, pwd=dec_pwd, port=443, sslContext=context)
                 content = si.RetrieveContent()
-                vm_list = get_all_vm_names(content)
+                vm_objects = get_all_vm_objects(content)
                 Disconnect(si)
                 if self.on_import_callback:
-                    self.on_import_callback(vm_list)
-
+                    self.on_import_callback(vm_objects)
             except Exception as e:
                 tk.messagebox.showerror("Error", f"Could not retrieve VMs from vCenter: {e}")
             finally:
                 self.destroy()
-
         import_thread = threading.Thread(target=worker, daemon=True)
         import_thread.start()
-
+def paste_to_vm(vm, clipboard_content, creds):
+    try:
+        if vm.guest.toolsRunningStatus != "guestToolsRunning":
+            return f"VMware Tools is not running on VM: {vm.name}"
+        process_manager = vm._stub.content.guestOperationsManager.processManager
+        if "linux" in vm.guest.guestId.lower():
+            arguments = f'-c "echo {clipboard_content} | xclip -selection clipboard"'
+            program_path = "/bin/bash"
+        else:
+            arguments = f'cmd /c "echo {clipboard_content} | clip"'
+            program_path = "C:\\Windows\\System32\\cmd.exe"
+        program_spec = vim.vm.guest.ProcessManager.ProgramSpec(programPath=program_path, arguments=arguments)
+        pid = process_manager.StartProgramInGuest(vm, creds, program_spec)
+        return f"Clipboard content pasted to VM: {vm.name}. Process ID: {pid}"
+    except Exception as e:
+        return f"Failed to paste clipboard content to VM {vm.name}: {e}"
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.3.0")
-        self.geometry("1000x600")
+        self.title("cMuX V1.4.0")
+        self.geometry("1000x800")
         self.configure(bg='black')
         self.option_add("*Menu.background", "black")
         self.option_add("*Menu.foreground", "#00FF00")
@@ -193,19 +168,17 @@ class ClipboardMultiplexer(tk.Tk):
         self.remote_systems = []
         self.active_sessions = {}
         self.credentials_store = []
-
+        self.vms = []
+        self.creds = None
         cred_key = os.getenv("CRED_ENCRYPTION_KEY")
         if not cred_key:
             cred_key = Fernet.generate_key()
         self.fernet_credentials = Fernet(cred_key)
-
         clip_key = os.getenv("CLIPBOARD_ENCRYPTION_KEY")
         if not clip_key:
             clip_key = Fernet.generate_key()
         self.fernet_clipboard = Fernet(clip_key)
-
         self.create_widgets()
-
     def create_styles(self):
         s = ttk.Style()
         s.configure('Custom.TFrame', background='black')
@@ -217,7 +190,6 @@ class ClipboardMultiplexer(tk.Tk):
         s.configure('Custom.TCheckbutton', background='black', foreground='#00FF00')
         s.configure('Custom.TCombobox', fieldbackground='black', foreground='#00FF00')
         return s
-
     def create_widgets(self):
         f = ttk.Frame(self, style='Custom.TFrame')
         f.pack(padx=10, pady=10, fill=tk.X)
@@ -226,56 +198,50 @@ class ClipboardMultiplexer(tk.Tk):
         self.remote_system_entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
         ttk.Button(f, text="Add", command=self.add_remote_system, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f, text="Remove", command=self.remove_selected_system, style='Custom.TButton').pack(side=tk.LEFT)
-
         f2 = ttk.Frame(self, style='Custom.TFrame')
         f2.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
         self.remote_systems_list = tk.Listbox(f2, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.remote_systems_list.pack(fill=tk.BOTH, expand=True)
-
         f3 = ttk.Frame(self, style='Custom.TFrame')
         f3.pack(padx=10, pady=10, fill=tk.X)
         ttk.Button(f3, text="Send Clipboard to All", command=self.send_clipboard_contents, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f3, text="Send Clipboard File to All", command=self.send_clipboard_file, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f3, text="Connect RDP", command=self.connect_rdp, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f3, text="Connect VNC", command=self.connect_vnc, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
-
         menu_bar = tk.Menu(self, bg='black', fg='#00FF00', tearoff=0)
         self.config(menu=menu_bar)
-
         clipboard_menu = tk.Menu(menu_bar, bg='black', fg='#00FF00', tearoff=0)
         menu_bar.add_cascade(label="Clipboard", menu=clipboard_menu)
         clipboard_menu.add_command(label="Paste into Current Session", command=self.paste_clipboard_current)
         clipboard_menu.add_command(label="Paste into All Sessions", command=self.paste_clipboard_all)
-
         import_menu = tk.Menu(menu_bar, bg='black', fg='#00FF00', tearoff=0)
         menu_bar.add_cascade(label="Import", menu=import_menu)
         import_menu.add_command(label="From File...", command=self.import_from_file)
         import_menu.add_command(label="From vCenter...", command=self.import_from_vcenter)
-
         f4 = ttk.Frame(self, style='Custom.TFrame')
         f4.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
         ttk.Label(f4, text="Active Sessions:", style='Custom.TLabel').pack()
         self.session_list = tk.Listbox(f4, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.session_list.pack(fill=tk.BOTH, expand=True)
         self.session_list.bind('<<ListboxSelect>>', self.bring_session_to_foreground)
-
         f5 = ttk.Frame(self, style='Custom.TFrame')
         f5.pack(padx=10, pady=10, fill=tk.X)
         ttk.Button(f5, text="Add Credentials", command=self.add_credentials, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f5, text="Remove Credentials", command=self.remove_selected_credential, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         self.credentials_list = tk.Listbox(f5, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.credentials_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
-
         ttk.Label(f5, text="Select Credentials:", style='Custom.TLabel').pack(side=tk.LEFT, padx=(5, 5))
         self.selected_credentials = StringVar()
-        self.credentials_combobox = ttk.Combobox(
-            f5,
-            textvariable=self.selected_credentials,
-            style='Custom.TCombobox',
-            state='readonly'
-        )
+        self.credentials_combobox = ttk.Combobox(f5, textvariable=self.selected_credentials, style='Custom.TCombobox', state='readonly')
         self.credentials_combobox.pack(fill=tk.X)
-
+        frame = ttk.Frame(self, style='Custom.TFrame')
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        ttk.Label(frame, text="Paste Clipboard to All vCenter VMs:", style='Custom.TLabel').pack()
+        ttk.Button(frame, text="Paste to All VMs", command=self.paste_to_all_vms, style='Custom.TButton').pack(pady=5)
+        ttk.Label(frame, text="Paste Clipboard to Selected vCenter VM:", style='Custom.TLabel').pack()
+        self.vm_listbox = tk.Listbox(frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
+        self.vm_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+        ttk.Button(frame, text="Paste to Selected VM", command=self.paste_to_selected_vm, style='Custom.TButton').pack(pady=5)
     def import_from_file(self):
         def do_import():
             path = filedialog.askopenfilename(filetypes=[("Text/CSV Files", "*.txt *.csv")])
@@ -292,23 +258,16 @@ class ClipboardMultiplexer(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Error", f"Import from file failed: {e}")
         threading.Thread(target=do_import).start()
-
     def import_from_vcenter(self):
-        def on_import_callback(vm_list):
-            for vm in vm_list:
-                if vm and vm not in self.remote_systems:
-                    self.remote_systems.append(vm)
-                    self.remote_systems_list.insert(tk.END, vm)
-
-        dialog = VCenterImportDialog(
-            parent=self,
-            encryption_key=os.getenv("VCENTER_ENCRYPTION_KEY", Fernet.generate_key()),
-            on_import_callback=on_import_callback
-        )
+        def on_import_callback(vm_objects):
+            self.vms = vm_objects
+            self.vm_listbox.delete(0, tk.END)
+            for vm in vm_objects:
+                self.vm_listbox.insert(tk.END, vm.name)
+        dialog = VCenterImportDialog(parent=self, encryption_key=os.getenv("VCENTER_ENCRYPTION_KEY", Fernet.generate_key()), on_import_callback=on_import_callback)
         dialog.transient(self)
         dialog.grab_set()
         self.wait_window(dialog)
-
     def add_remote_system(self):
         a = self.remote_system_entry.get().strip()
         if a and a not in self.remote_systems:
@@ -317,7 +276,6 @@ class ClipboardMultiplexer(tk.Tk):
             self.remote_system_entry.delete(0, tk.END)
         else:
             messagebox.showwarning("Warning", "Please enter a valid (new) system address.")
-
     def remove_selected_system(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -325,7 +283,6 @@ class ClipboardMultiplexer(tk.Tk):
             return
         self.remote_systems.pop(i)
         self.remote_systems_list.delete(i)
-
     def send_clipboard_contents(self):
         c = pyperclip.paste()
         if not c:
@@ -333,7 +290,6 @@ class ClipboardMultiplexer(tk.Tk):
             return
         for s in self.remote_systems:
             threading.Thread(target=self.send_to_remote_system, args=(s, c)).start()
-
     def send_to_remote_system(self, addr, data):
         try:
             enc_data = self.fernet_clipboard.encrypt(data.encode())
@@ -341,7 +297,6 @@ class ClipboardMultiplexer(tk.Tk):
                 sock.sendall(enc_data)
         except Exception as e:
             self.report_error(f"Could not send data to {addr}: {e}")
-
     def paste_clipboard_current(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -350,10 +305,8 @@ class ClipboardMultiplexer(tk.Tk):
         addr = self.remote_systems_list.get(i)
         d = pyperclip.paste()
         threading.Thread(target=self.send_to_remote_system, args=(addr, d)).start()
-
     def paste_clipboard_all(self):
         self.send_clipboard_contents()
-
     def send_clipboard_file(self):
         if not self.credentials_store:
             messagebox.showerror("Error", "No credentials stored. Please add credentials first.")
@@ -369,7 +322,6 @@ class ClipboardMultiplexer(tk.Tk):
         p = self.fernet_credentials.decrypt(p_enc).decode()
         for s in self.remote_systems:
             threading.Thread(target=self.send_file_to_remote_system, args=(s, fp, u, p)).start()
-
     def get_clipboard_file(self):
         if not win32clipboard:
             messagebox.showerror("Error", "pywin32 not installed or not supported. File clipboard unavailable.")
@@ -387,7 +339,6 @@ class ClipboardMultiplexer(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to get file from clipboard: {e}")
             return None
-
     def send_file_to_remote_system(self, addr, fp, u, p):
         try:
             s = winrm.Session(f'http://{addr}:5985/wsman', auth=(u, p))
@@ -399,7 +350,6 @@ class ClipboardMultiplexer(tk.Tk):
             s.run_ps(sc)
         except Exception as e:
             self.report_error(f"Could not send file to {addr}: {e}")
-
     def connect_rdp(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -418,7 +368,6 @@ class ClipboardMultiplexer(tk.Tk):
             self.session_list.insert(tk.END, f"RDP: {addr}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not connect to {addr} via RDP: {e}")
-
     def create_rdp_file(self, addr, u):
         c = f"""
 screen mode id:i:2
@@ -464,7 +413,6 @@ kdcproxyname:s:
         with open(r, 'w', encoding='utf-8') as f:
             f.write(c.strip())
         return r
-
     def connect_vnc(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -486,7 +434,6 @@ kdcproxyname:s:
             self.session_list.insert(tk.END, f"VNC: {addr}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not connect to {addr} via VNC: {e}")
-
     def download_vnc_viewer(self):
         v = os.path.join(os.getenv('TEMP'), "VNC-Viewer.exe")
         if not os.path.exists(v):
@@ -499,7 +446,6 @@ kdcproxyname:s:
                 messagebox.showerror("Error", f"Failed to download VNC Viewer: {e}")
                 return None
         return v
-
     def bring_session_to_foreground(self, _):
         i = self.get_selected_index(self.session_list)
         if i is None:
@@ -528,19 +474,16 @@ kdcproxyname:s:
             messagebox.showerror("Error", f"Session to {addr} has been closed.")
             self.session_list.delete(i)
             del self.active_sessions[addr]
-
     def add_credentials(self):
         d = CredentialsDialog(self, self.store_credentials)
         d.transient(self)
         d.grab_set()
         self.wait_window(d)
-
     def store_credentials(self, u, p):
         p_enc = self.fernet_credentials.encrypt(p.encode())
         self.credentials_store.append((u, p_enc))
         self.credentials_list.insert(tk.END, u)
         self.update_credentials_combobox()
-
     def remove_selected_credential(self):
         i = self.get_selected_index(self.credentials_list)
         if i is None:
@@ -549,21 +492,63 @@ kdcproxyname:s:
         self.credentials_store.pop(i)
         self.credentials_list.delete(i)
         self.update_credentials_combobox()
-
     def update_credentials_combobox(self):
         self.credentials_combobox['values'] = [c[0] for c in self.credentials_store]
         if not self.credentials_store:
             self.credentials_combobox.set('')
-
     def get_selected_index(self, lb):
         s = lb.curselection()
         if not s:
             return None
         return s[0]
-
     def report_error(self, m):
         self.after(0, messagebox.showerror, "Error", m)
-
+    def generate_vm_creds(self):
+        ci = self.credentials_combobox.current()
+        if ci == -1:
+            return None
+        u, p_enc = self.credentials_store[ci]
+        p = self.fernet_credentials.decrypt(p_enc).decode()
+        auth = vim.vm.guest.NamePasswordAuthentication(username=u, password=p)
+        return auth
+    def paste_to_all_vms(self):
+        if not self.vms:
+            messagebox.showerror("Error", "No VMs imported from vCenter.")
+            return
+        self.creds = self.generate_vm_creds()
+        if not self.creds:
+            messagebox.showerror("Error", "Please select valid credentials for VM guest operations.")
+            return
+        clipboard_content = pyperclip.paste()
+        if not clipboard_content:
+            messagebox.showerror("Error", "Clipboard is empty.")
+            return
+        for vm in self.vms:
+            message = paste_to_vm(vm, clipboard_content, self.creds)
+            print(message)
+    def paste_to_selected_vm(self):
+        if not self.vms:
+            messagebox.showerror("Error", "No VMs imported from vCenter.")
+            return
+        selected_index = self.vm_listbox.curselection()
+        if not selected_index:
+            messagebox.showerror("Error", "No VM selected.")
+            return
+        clipboard_content = pyperclip.paste()
+        if not clipboard_content:
+            messagebox.showerror("Error", "Clipboard is empty.")
+            return
+        vm_name = self.vm_listbox.get(selected_index)
+        vm = next((obj for obj in self.vms if obj.name == vm_name), None)
+        if vm is None:
+            messagebox.showerror("Error", f"Cannot find VM object for {vm_name}.")
+            return
+        self.creds = self.generate_vm_creds()
+        if not self.creds:
+            messagebox.showerror("Error", "Please select valid credentials for VM guest operations.")
+            return
+        message = paste_to_vm(vm, clipboard_content, self.creds)
+        messagebox.showinfo("Info", message)
 if __name__ == "__main__":
     app = ClipboardMultiplexer()
     app.mainloop()
