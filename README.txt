@@ -7,4 +7,4 @@
 ╚██████╗██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗    
  ╚═════╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝    
                                         
-Clipboard multiplexer, mini RDP client, credential/session manager - v1.3.0
+Clipboard multiplexer, mini RDP client, credential/session manager - v1.4.0
