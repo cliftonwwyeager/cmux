@@ -12,12 +12,14 @@ import winrm
 from pyvim.connect import SmartConnect, Disconnect
 from pyVmomi import vim
 from cryptography.fernet import Fernet
-try:
-    import win32clipboard
-except ImportError:
-    win32clipboard = None
-PORT = 22
+from collections import deque
+import time
+import pystray
+from PIL import Image, ImageDraw
+
+PORT = 2222
 VNC_VIEWER_DOWNLOAD_URL = "https://downloads.realvnc.com/download/file/vnc.files/VNC-Connect-Installer-2.3.0-Windows.exe"
+
 def traverse_inventory_for_objects(entity, vm_objects):
     if isinstance(entity, vim.Datacenter):
         traverse_inventory_for_objects(entity.vmFolder, vm_objects)
@@ -29,11 +31,30 @@ def traverse_inventory_for_objects(entity, vm_objects):
             traverse_inventory_for_objects(child_vm, vm_objects)
     elif isinstance(entity, vim.VirtualMachine):
         vm_objects.append(entity)
+
 def get_all_vm_objects(content):
     vm_objects = []
     for child_entity in content.rootFolder.childEntity:
         traverse_inventory_for_objects(child_entity, vm_objects)
     return vm_objects
+
+def paste_to_vm(vm, clipboard_content, creds):
+    try:
+        if vm.guest.toolsRunningStatus != "guestToolsRunning":
+            return f"VMware Tools is not running on VM: {vm.name}"
+        process_manager = vm._stub.content.guestOperationsManager.processManager
+        if "linux" in vm.guest.guestId.lower():
+            arguments = f'-c "echo {clipboard_content} | xclip -selection clipboard"'
+            program_path = "/bin/bash"
+        else:
+            arguments = f'cmd /c "echo {clipboard_content} | clip"'
+            program_path = "C:\\Windows\\System32\\cmd.exe"
+        program_spec = vim.vm.guest.ProcessManager.ProgramSpec(programPath=program_path, arguments=arguments)
+        pid = process_manager.StartProgramInGuest(vm, creds, program_spec)
+        return f"Clipboard content pasted to VM: {vm.name}. Process ID: {pid}"
+    except Exception as e:
+        return f"Failed to paste clipboard content to VM {vm.name}: {e}"
+
 class CredentialsDialog(Toplevel):
     def __init__(self, parent, on_store_callback):
         super().__init__(parent)
@@ -46,6 +67,7 @@ class CredentialsDialog(Toplevel):
         self.password_var = StringVar()
         self.show_password_var = BooleanVar()
         self.create_widgets()
+
     def create_widgets(self):
         ttk.Label(self, text="Username:", style='Custom.TLabel').pack(pady=5)
         ttk.Entry(self, textvariable=self.username_var, style='Custom.TEntry').pack(pady=5)
@@ -57,11 +79,13 @@ class CredentialsDialog(Toplevel):
         f.pack(pady=10)
         ttk.Button(f, text="Store", command=self.on_store, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(f, text="Cancel", command=self.on_cancel, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
+
     def toggle_password(self):
         if self.show_password_var.get():
             self.password_entry.config(show='')
         else:
             self.password_entry.config(show='*')
+
     def on_store(self):
         u = self.username_var.get().strip()
         p = self.password_var.get()
@@ -70,8 +94,10 @@ class CredentialsDialog(Toplevel):
             self.destroy()
         else:
             messagebox.showwarning("Warning", "Please enter both username and password.")
+
     def on_cancel(self):
         self.destroy()
+
 class VCenterImportDialog(tk.Toplevel):
     def __init__(self, parent, encryption_key, on_import_callback):
         super().__init__(parent)
@@ -83,6 +109,7 @@ class VCenterImportDialog(tk.Toplevel):
         self.fernet = Fernet(self.encryption_key)
         self.on_import_callback = on_import_callback
         self.create_widgets()
+
     def create_widgets(self):
         ttk.Label(self, text="vCenter Host/IP:", style='Custom.TLabel').pack(pady=5)
         self.vcenter_host_var = tk.StringVar()
@@ -101,8 +128,10 @@ class VCenterImportDialog(tk.Toplevel):
         frame.pack(pady=10)
         ttk.Button(frame, text="Import", command=self.on_import, style='Custom.TButton').pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(frame, text="Cancel", command=self.on_cancel, style='Custom.TButton').pack(side=tk.LEFT)
+
     def on_cancel(self):
         self.destroy()
+
     def on_import(self):
         host = self.vcenter_host_var.get().strip()
         user = self.username_var.get().strip()
@@ -112,6 +141,7 @@ class VCenterImportDialog(tk.Toplevel):
             messagebox.showerror("Error", "Please enter the required vCenter host, username, and password.")
             return
         self.do_vcenter_import(host, user, pwd, ca_cert_path)
+
     def do_vcenter_import(self, host, user, pwd, ca_cert_path):
         enc_user = self.fernet.encrypt(user.encode())
         enc_pwd = self.fernet.encrypt(pwd.encode())
@@ -138,28 +168,89 @@ class VCenterImportDialog(tk.Toplevel):
                 self.destroy()
         import_thread = threading.Thread(target=worker, daemon=True)
         import_thread.start()
-def paste_to_vm(vm, clipboard_content, creds):
-    try:
-        if vm.guest.toolsRunningStatus != "guestToolsRunning":
-            return f"VMware Tools is not running on VM: {vm.name}"
-        process_manager = vm._stub.content.guestOperationsManager.processManager
-        if "linux" in vm.guest.guestId.lower():
-            arguments = f'-c "echo {clipboard_content} | xclip -selection clipboard"'
-            program_path = "/bin/bash"
-        else:
-            arguments = f'cmd /c "echo {clipboard_content} | clip"'
-            program_path = "C:\\Windows\\System32\\cmd.exe"
-        program_spec = vim.vm.guest.ProcessManager.ProgramSpec(programPath=program_path, arguments=arguments)
-        pid = process_manager.StartProgramInGuest(vm, creds, program_spec)
-        return f"Clipboard content pasted to VM: {vm.name}. Process ID: {pid}"
-    except Exception as e:
-        return f"Failed to paste clipboard content to VM {vm.name}: {e}"
+
+class ClipboardHistoryManager:
+    def __init__(self, max_items=5):
+        self.max_items = max_items
+        self.local_history = deque(maxlen=max_items)
+        self.remote_history = deque(maxlen=max_items)
+
+    def add_local(self, item):
+        if item and (not self.local_history or item != self.local_history[-1]):
+            self.local_history.append(item)
+
+    def add_remote(self, item):
+        if item and (not self.remote_history or item != self.remote_history[-1]):
+            self.remote_history.append(item)
+
+class TrayIconManager:
+    def __init__(self, clipboard_history_manager, local_paste_callback, remote_paste_callback, show_remote_history_callback):
+        self.clipboard_history_manager = clipboard_history_manager
+        self.local_paste_callback = local_paste_callback
+        self.remote_paste_callback = remote_paste_callback
+        self.show_remote_history_callback = show_remote_history_callback
+        self.icon = pystray.Icon("cMuX", self.create_image(), "cMuX Clipboard Manager", self.build_menu())
+        self.thread = threading.Thread(target=self.icon.run, daemon=True)
+        self.thread.start()
+
+    def create_image(self):
+        image = Image.new('RGB', (64, 64), "black")
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 20), "cM", fill="#00FF00")
+        return image
+
+    def build_menu(self):
+        menu_items = []
+        for i, item in enumerate(list(self.clipboard_history_manager.local_history)):
+            preview = item.replace('\n', ' ')[:20]
+            submenu = pystray.Menu(
+                pystray.MenuItem("Paste to Local", lambda icon, item, index=i: self.local_paste_callback(index)),
+                pystray.MenuItem("Paste to Remote", lambda icon, item, index=i: self.remote_paste_callback(index))
+            )
+            menu_items.append(pystray.MenuItem(f"{i+1}: {preview}", submenu))
+        menu_items.append(pystray.MenuItem("Show Remote History", lambda icon, item: self.show_remote_history_callback()))
+        menu_items.append(pystray.MenuItem("Quit", self.quit))
+        return pystray.Menu(*menu_items)
+
+    def update_menu(self):
+        self.icon.menu = self.build_menu()
+
+    def quit(self, icon, item):
+        icon.stop()
+
+class RemoteClipboardServer(threading.Thread):
+    def __init__(self, port, fernet, callback):
+        super().__init__(daemon=True)
+        self.port = port
+        self.fernet = fernet
+        self.callback = callback
+        self.running = True
+
+    def run(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(('', self.port))
+        s.listen(5)
+        while self.running:
+            try:
+                conn, addr = s.accept()
+                data = conn.recv(4096)
+                if data:
+                    decrypted = self.fernet.decrypt(data).decode()
+                    self.callback(decrypted)
+                conn.close()
+            except Exception as e:
+                print(f"RemoteClipboardServer error: {e}")
+        s.close()
+
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("cMuX V1.4.0")
         self.geometry("1000x800")
         self.configure(bg='black')
+        style = ttk.Style(self)
+        style.theme_use('clam')
         self.option_add("*Menu.background", "black")
         self.option_add("*Menu.foreground", "#00FF00")
         self.option_add("*Menu.activeBackground", "#2F2F2F")
@@ -178,7 +269,20 @@ class ClipboardMultiplexer(tk.Tk):
         if not clip_key:
             clip_key = Fernet.generate_key()
         self.fernet_clipboard = Fernet(clip_key)
+        self.clipboard_history = ClipboardHistoryManager(max_items=5)
+        self.last_clipboard = ""
+        self.remote_clipboard_server = RemoteClipboardServer(PORT, self.fernet_clipboard, self.handle_remote_clipboard_received)
+        self.remote_clipboard_server.start()
+        self.tray_icon_manager = TrayIconManager(
+            self.clipboard_history,
+            self.on_tray_local_paste,
+            self.on_tray_remote_paste,
+            self.show_remote_history
+        )
+
         self.create_widgets()
+        self.after(1000, self.check_clipboard)
+
     def create_styles(self):
         s = ttk.Style()
         s.configure('Custom.TFrame', background='black')
@@ -190,6 +294,7 @@ class ClipboardMultiplexer(tk.Tk):
         s.configure('Custom.TCheckbutton', background='black', foreground='#00FF00')
         s.configure('Custom.TCombobox', fieldbackground='black', foreground='#00FF00')
         return s
+
     def create_widgets(self):
         f = ttk.Frame(self, style='Custom.TFrame')
         f.pack(padx=10, pady=10, fill=tk.X)
@@ -242,32 +347,49 @@ class ClipboardMultiplexer(tk.Tk):
         self.vm_listbox = tk.Listbox(frame, selectmode=tk.SINGLE, bg='black', fg='#00FF00')
         self.vm_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
         ttk.Button(frame, text="Paste to Selected VM", command=self.paste_to_selected_vm, style='Custom.TButton').pack(pady=5)
-    def import_from_file(self):
-        def do_import():
-            path = filedialog.askopenfilename(filetypes=[("Text/CSV Files", "*.txt *.csv")])
-            if not path:
-                return
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                for line in lines:
-                    line = line.strip()
-                    if line and line not in self.remote_systems:
-                        self.remote_systems.append(line)
-                        self.remote_systems_list.insert(tk.END, line)
-            except Exception as e:
-                messagebox.showerror("Error", f"Import from file failed: {e}")
-        threading.Thread(target=do_import).start()
-    def import_from_vcenter(self):
-        def on_import_callback(vm_objects):
-            self.vms = vm_objects
-            self.vm_listbox.delete(0, tk.END)
-            for vm in vm_objects:
-                self.vm_listbox.insert(tk.END, vm.name)
-        dialog = VCenterImportDialog(parent=self, encryption_key=os.getenv("VCENTER_ENCRYPTION_KEY", Fernet.generate_key()), on_import_callback=on_import_callback)
-        dialog.transient(self)
-        dialog.grab_set()
-        self.wait_window(dialog)
+
+    def check_clipboard(self):
+        try:
+            current = pyperclip.paste()
+            if current != self.last_clipboard:
+                self.last_clipboard = current
+                self.clipboard_history.add_local(current)
+                self.tray_icon_manager.update_menu()
+        except Exception as e:
+            print("Clipboard check error:", e)
+        self.after(1000, self.check_clipboard)
+
+    def handle_remote_clipboard_received(self, data):
+        self.clipboard_history.add_remote(data)
+        print("Received remote clipboard:", data)
+
+    def on_tray_local_paste(self, index):
+        try:
+            item = self.clipboard_history.local_history[index]
+            pyperclip.copy(item)
+            messagebox.showinfo("Tray Action", f"Local clipboard updated with:\n{item[:50]}")
+        except Exception as e:
+            messagebox.showerror("Tray Error", f"Error in local paste: {e}")
+
+    def on_tray_remote_paste(self, index):
+        try:
+            if index < len(self.clipboard_history.local_history):
+                content = self.clipboard_history.local_history[index]
+                for s in self.remote_systems:
+                    threading.Thread(target=self.send_to_remote_system, args=(s, content), daemon=True).start()
+                messagebox.showinfo("Tray Action", "Clipboard content sent to all remote systems.")
+            else:
+                messagebox.showwarning("Tray Action", "No clipboard item found at that index.")
+        except Exception as e:
+            messagebox.showerror("Tray Error", f"Error in remote paste: {e}")
+
+    def show_remote_history(self):
+        if self.clipboard_history.remote_history:
+            history_str = "\n\n".join(f"{i+1}: {entry}" for i, entry in enumerate(self.clipboard_history.remote_history))
+        else:
+            history_str = "No remote clipboard history available."
+        messagebox.showinfo("Remote Clipboard History", history_str)
+
     def add_remote_system(self):
         a = self.remote_system_entry.get().strip()
         if a and a not in self.remote_systems:
@@ -276,6 +398,7 @@ class ClipboardMultiplexer(tk.Tk):
             self.remote_system_entry.delete(0, tk.END)
         else:
             messagebox.showwarning("Warning", "Please enter a valid (new) system address.")
+
     def remove_selected_system(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -283,13 +406,15 @@ class ClipboardMultiplexer(tk.Tk):
             return
         self.remote_systems.pop(i)
         self.remote_systems_list.delete(i)
+
     def send_clipboard_contents(self):
         c = pyperclip.paste()
         if not c:
             messagebox.showerror("Error", "Clipboard is empty.")
             return
         for s in self.remote_systems:
-            threading.Thread(target=self.send_to_remote_system, args=(s, c)).start()
+            threading.Thread(target=self.send_to_remote_system, args=(s, c), daemon=True).start()
+
     def send_to_remote_system(self, addr, data):
         try:
             enc_data = self.fernet_clipboard.encrypt(data.encode())
@@ -297,6 +422,7 @@ class ClipboardMultiplexer(tk.Tk):
                 sock.sendall(enc_data)
         except Exception as e:
             self.report_error(f"Could not send data to {addr}: {e}")
+
     def paste_clipboard_current(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -304,9 +430,11 @@ class ClipboardMultiplexer(tk.Tk):
             return
         addr = self.remote_systems_list.get(i)
         d = pyperclip.paste()
-        threading.Thread(target=self.send_to_remote_system, args=(addr, d)).start()
+        threading.Thread(target=self.send_to_remote_system, args=(addr, d), daemon=True).start()
+
     def paste_clipboard_all(self):
         self.send_clipboard_contents()
+
     def send_clipboard_file(self):
         if not self.credentials_store:
             messagebox.showerror("Error", "No credentials stored. Please add credentials first.")
@@ -321,9 +449,12 @@ class ClipboardMultiplexer(tk.Tk):
         u, p_enc = self.credentials_store[ci]
         p = self.fernet_credentials.decrypt(p_enc).decode()
         for s in self.remote_systems:
-            threading.Thread(target=self.send_file_to_remote_system, args=(s, fp, u, p)).start()
+            threading.Thread(target=self.send_file_to_remote_system, args=(s, fp, u, p), daemon=True).start()
+
     def get_clipboard_file(self):
-        if not win32clipboard:
+        try:
+            import win32clipboard
+        except ImportError:
             messagebox.showerror("Error", "pywin32 not installed or not supported. File clipboard unavailable.")
             return None
         try:
@@ -339,6 +470,7 @@ class ClipboardMultiplexer(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to get file from clipboard: {e}")
             return None
+
     def send_file_to_remote_system(self, addr, fp, u, p):
         try:
             s = winrm.Session(f'http://{addr}:5985/wsman', auth=(u, p))
@@ -350,6 +482,7 @@ class ClipboardMultiplexer(tk.Tk):
             s.run_ps(sc)
         except Exception as e:
             self.report_error(f"Could not send file to {addr}: {e}")
+
     def connect_rdp(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -368,6 +501,7 @@ class ClipboardMultiplexer(tk.Tk):
             self.session_list.insert(tk.END, f"RDP: {addr}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not connect to {addr} via RDP: {e}")
+
     def create_rdp_file(self, addr, u):
         c = f"""
 screen mode id:i:2
@@ -413,6 +547,7 @@ kdcproxyname:s:
         with open(r, 'w', encoding='utf-8') as f:
             f.write(c.strip())
         return r
+
     def connect_vnc(self):
         i = self.get_selected_index(self.remote_systems_list)
         if i is None:
@@ -434,6 +569,7 @@ kdcproxyname:s:
             self.session_list.insert(tk.END, f"VNC: {addr}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not connect to {addr} via VNC: {e}")
+
     def download_vnc_viewer(self):
         v = os.path.join(os.getenv('TEMP'), "VNC-Viewer.exe")
         if not os.path.exists(v):
@@ -446,6 +582,7 @@ kdcproxyname:s:
                 messagebox.showerror("Error", f"Failed to download VNC Viewer: {e}")
                 return None
         return v
+
     def bring_session_to_foreground(self, _):
         i = self.get_selected_index(self.session_list)
         if i is None:
@@ -474,16 +611,19 @@ kdcproxyname:s:
             messagebox.showerror("Error", f"Session to {addr} has been closed.")
             self.session_list.delete(i)
             del self.active_sessions[addr]
+
     def add_credentials(self):
         d = CredentialsDialog(self, self.store_credentials)
         d.transient(self)
         d.grab_set()
         self.wait_window(d)
+
     def store_credentials(self, u, p):
         p_enc = self.fernet_credentials.encrypt(p.encode())
         self.credentials_store.append((u, p_enc))
         self.credentials_list.insert(tk.END, u)
         self.update_credentials_combobox()
+
     def remove_selected_credential(self):
         i = self.get_selected_index(self.credentials_list)
         if i is None:
@@ -492,17 +632,21 @@ kdcproxyname:s:
         self.credentials_store.pop(i)
         self.credentials_list.delete(i)
         self.update_credentials_combobox()
+
     def update_credentials_combobox(self):
         self.credentials_combobox['values'] = [c[0] for c in self.credentials_store]
         if not self.credentials_store:
             self.credentials_combobox.set('')
+
     def get_selected_index(self, lb):
         s = lb.curselection()
         if not s:
             return None
         return s[0]
+
     def report_error(self, m):
         self.after(0, messagebox.showerror, "Error", m)
+
     def generate_vm_creds(self):
         ci = self.credentials_combobox.current()
         if ci == -1:
@@ -511,6 +655,7 @@ kdcproxyname:s:
         p = self.fernet_credentials.decrypt(p_enc).decode()
         auth = vim.vm.guest.NamePasswordAuthentication(username=u, password=p)
         return auth
+
     def paste_to_all_vms(self):
         if not self.vms:
             messagebox.showerror("Error", "No VMs imported from vCenter.")
@@ -526,6 +671,7 @@ kdcproxyname:s:
         for vm in self.vms:
             message = paste_to_vm(vm, clipboard_content, self.creds)
             print(message)
+
     def paste_to_selected_vm(self):
         if not self.vms:
             messagebox.showerror("Error", "No VMs imported from vCenter.")
@@ -549,6 +695,39 @@ kdcproxyname:s:
             return
         message = paste_to_vm(vm, clipboard_content, self.creds)
         messagebox.showinfo("Info", message)
+
+    def import_from_file(self):
+        def do_import():
+            path = filedialog.askopenfilename(filetypes=[("Text/CSV Files", "*.txt *.csv")])
+            if not path:
+                return
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                for line in lines:
+                    line = line.strip()
+                    if line and line not in self.remote_systems:
+                        self.remote_systems.append(line)
+                        self.remote_systems_list.insert(tk.END, line)
+            except Exception as e:
+                messagebox.showerror("Error", f"Import from file failed: {e}")
+        threading.Thread(target=do_import, daemon=True).start()
+
+    def import_from_vcenter(self):
+        def on_import_callback(vm_objects):
+            self.vms = vm_objects
+            self.vm_listbox.delete(0, tk.END)
+            for vm in vm_objects:
+                self.vm_listbox.insert(tk.END, vm.name)
+        dialog = VCenterImportDialog(
+            parent=self,
+            encryption_key=os.getenv("VCENTER_ENCRYPTION_KEY", Fernet.generate_key()),
+            on_import_callback=on_import_callback
+        )
+        dialog.transient(self)
+        dialog.grab_set()
+        self.wait_window(dialog)
+
 if __name__ == "__main__":
     app = ClipboardMultiplexer()
     app.mainloop()
