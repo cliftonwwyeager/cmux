@@ -246,7 +246,7 @@ class RemoteClipboardServer(threading.Thread):
 class ClipboardMultiplexer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("cMuX V1.4.0")
+        self.title("cMuX V1.4.1")
         self.geometry("1000x800")
         self.configure(bg='black')
         style = ttk.Style(self)
