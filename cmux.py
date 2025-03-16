@@ -5,7 +5,7 @@ import subprocess
 import base64
 import ssl
 import tkinter as tk
-from tkinter import ttk, messagebox, Toplevel, StringVar, BooleanVar, filedialog, simpledialog
+from tkinter import ttk, messagebox, Toplevel, StringVar, BooleanVar, filedialog
 import pyperclip
 import requests
 import winrm
